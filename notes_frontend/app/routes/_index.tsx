@@ -28,21 +28,45 @@ const NOTES_API_BASE =
     : "http://localhost:4000";
 
 // ---- Loader fetches all notes and (optionally) a focused note ----
+/**
+ * Loader for the notes root page.
+ * Handles network failures gracefully, so a unreachable/misconfigured API
+ * doesn't crash the app. Returns an error property in data on failures.
+ */
 export async function loader({ request }: LoaderFunctionArgs) {
+  function isErrorWithMessage(err: unknown): err is { message: string } {
+    return (
+      typeof err === "object" &&
+      err !== null &&
+      "message" in err &&
+      typeof (err as { message: unknown }).message === "string"
+    );
+  }
+
   const url = new URL(request.url);
   const noteId = url.searchParams.get("noteId");
-  const [notesRes, noteRes] = await Promise.all([
-    fetch(`${NOTES_API_BASE}/notes`),
-    noteId
-      ? fetch(`${NOTES_API_BASE}/notes/${noteId}`)
-      : Promise.resolve({ ok: false }),
-  ]);
-  const notes = notesRes.ok ? await notesRes.json() : [];
+  let notes = [];
   let activeNote = null;
-  if (noteRes.ok) {
-    activeNote = await noteRes.json();
+  let error = null;
+  try {
+    const [notesRes, noteRes] = await Promise.all([
+      fetch(`${NOTES_API_BASE}/notes`),
+      noteId
+        ? fetch(`${NOTES_API_BASE}/notes/${noteId}`)
+        : Promise.resolve({ ok: false }),
+    ]);
+    notes = notesRes.ok ? await notesRes.json() : [];
+    if (noteRes.ok) {
+      activeNote = await noteRes.json();
+    }
+  } catch (e: unknown) {
+    if (isErrorWithMessage(e)) {
+      error = `Could not connect to backend API: ${e.message}`;
+    } else {
+      error = "Could not connect to backend API.";
+    }
   }
-  return json({ notes, activeNote, selectedId: noteId || null });
+  return json({ notes, activeNote, selectedId: noteId || null, error });
 }
 
 // ---- Handles create, update, and delete ----
@@ -108,10 +132,11 @@ function classNames(...classes: (string | boolean | null | undefined)[]) {
  *   "accent":    #fbc02d (Buttons and highlights)
  */
 export default function NotesApp() {
-  const { notes, activeNote, selectedId } = useLoaderData<{
+  const { notes, activeNote, selectedId, error: loaderError } = useLoaderData<{
     notes: Note[];
     activeNote: Note | null;
     selectedId: string | null;
+    error?: string | null;
   }>();
   const actionData = useActionData<{ error?: string }>();
   const creationFormRef = useRef<HTMLFormElement | null>(null);
@@ -182,16 +207,23 @@ export default function NotesApp() {
                 + New Note
               </button>
             </Form>
+            {loaderError && (
+              <div className="mt-4 text-red-600 text-sm text-center font-semibold">
+                {loaderError}
+                <br />
+                Please ensure the backend notes API is running and the <b>NOTES_API_BASE</b> is set correctly.
+              </div>
+            )}
           </div>
           {/* Notes List */}
           <nav className="flex-1 overflow-y-auto">
             <ul>
-              {notes.length === 0 && (
+              {(!loaderError && notes.length === 0) && (
                 <li className="p-6 text-gray-400 italic text-center">
                   No notes yet.
                 </li>
               )}
-              {notes.map((note) => (
+              {(notes || []).map((note) => (
                 <li key={note.id}>
                   <Link
                     to={`/?noteId=${encodeURIComponent(note.id)}`}
@@ -215,7 +247,23 @@ export default function NotesApp() {
         <section className="flex-1 min-w-0 flex flex-col justify-stretch">
           <div className="flex-1 flex items-stretch min-h-0">
             <div className="flex-1 max-w-2xl mx-auto w-full p-10 sm:p-14 flex flex-col">
-              {!selectedId ? (
+              {loaderError ? (
+                <div className="mt-24 text-center text-red-500">
+                  <div className="inline-block p-3 bg-red-100 rounded-lg mb-6">
+                    <span className="text-3xl">⚠️</span>
+                  </div>
+                  <h2 className="text-xl font-semibold mb-3">
+                    Cannot fetch notes from backend
+                  </h2>
+                  <p className="text-base text-red-500">
+                    {loaderError}
+                  </p>
+                  <p className="text-base text-gray-400 mt-3">
+                    Check that the backend notes API is reachable at: <br />
+                    <code className="text-gray-500 bg-gray-50 px-2 py-1 rounded border">{NOTES_API_BASE}/notes</code>
+                  </p>
+                </div>
+              ) : !selectedId ? (
                 <div className="text-center text-gray-400 mt-32">
                   <div className="inline-block p-3 bg-gray-100 rounded-lg mb-6">
                     <span className="text-3xl">📝</span>
