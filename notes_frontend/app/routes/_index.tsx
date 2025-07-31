@@ -1,138 +1,413 @@
-import type { MetaFunction } from "@remix-run/node";
+import {
+  ActionFunctionArgs,
+  LoaderFunctionArgs,
+  json,
+  redirect,
+} from "@remix-run/node";
+import {
+  Form,
+  Link,
+  useActionData,
+  useLoaderData,
+} from "@remix-run/react";
+import { useEffect, useRef, useState } from "react";
 
-export const meta: MetaFunction = () => {
-  return [
-    { title: "New Remix App" },
-    { name: "description", content: "Welcome to Remix!" },
-  ];
-};
+/**
+ * ---- NOTES API CONFIGURATION ----
+ * Adjust the API URL below to point to your notes_database container REST endpoint.
+ * The API is expected to provide endpoints:
+ *   GET    /notes         -> list notes
+ *   POST   /notes         -> create new note (body: {title, body})
+ *   PUT    /notes/:id     -> update note (body: {title, body})
+ *   DELETE /notes/:id     -> delete note
+ *   GET    /notes/:id     -> fetch one note
+ */
+const NOTES_API_BASE =
+  typeof process !== "undefined" && process.env.NOTES_API_BASE
+    ? process.env.NOTES_API_BASE
+    : "http://localhost:4000";
 
-export default function Index() {
+// ---- Loader fetches all notes and (optionally) a focused note ----
+export async function loader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url);
+  const noteId = url.searchParams.get("noteId");
+  const [notesRes, noteRes] = await Promise.all([
+    fetch(`${NOTES_API_BASE}/notes`),
+    noteId
+      ? fetch(`${NOTES_API_BASE}/notes/${noteId}`)
+      : Promise.resolve({ ok: false }),
+  ]);
+  const notes = notesRes.ok ? await notesRes.json() : [];
+  let activeNote = null;
+  if (noteRes.ok) {
+    activeNote = await noteRes.json();
+  }
+  return json({ notes, activeNote, selectedId: noteId || null });
+}
+
+// ---- Handles create, update, and delete ----
+export async function action({ request }: ActionFunctionArgs) {
+  const formData = await request.formData();
+  const intent = formData.get("_intent");
+  const title = formData.get("title")?.toString() ?? "";
+  const body = formData.get("body")?.toString() ?? "";
+  const id = formData.get("id")?.toString();
+
+  // CREATE
+  if (intent === "create") {
+    const res = await fetch(`${NOTES_API_BASE}/notes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, body }),
+    });
+    const newNote = res.ok ? await res.json() : null;
+    if (newNote) {
+      return redirect(`/?noteId=${encodeURIComponent(newNote.id)}`);
+    }
+    return json({ error: "Failed to create note." }, { status: 400 });
+  }
+
+  // UPDATE
+  if (intent === "update" && id) {
+    const res = await fetch(`${NOTES_API_BASE}/notes/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, body }),
+    });
+    if (res.ok) {
+      return redirect(`/?noteId=${encodeURIComponent(id)}`);
+    }
+    return json({ error: "Failed to update note." }, { status: 400 });
+  }
+
+  // DELETE
+  if (intent === "delete" && id) {
+    const res = await fetch(`${NOTES_API_BASE}/notes/${id}`, {
+      method: "DELETE",
+    });
+    if (res.ok) {
+      return redirect("/");
+    }
+    return json({ error: "Failed to delete note." }, { status: 400 });
+  }
+
+  return json({ error: "Invalid request." }, { status: 400 });
+}
+
+// ---- UI COMPONENTS ----
+
+function classNames(...classes: (string | boolean | null | undefined)[]) {
+  return classes.filter(Boolean).join(" ");
+}
+
+/**
+ * Minimalistic, modern, and light themed app.
+ * Color palette:
+ *   "primary":   #1976d2 (Title, focused, selected)
+ *   "secondary": #424242 (Sidebar, divider, text)
+ *   "accent":    #fbc02d (Buttons and highlights)
+ */
+export default function NotesApp() {
+  const { notes, activeNote, selectedId } = useLoaderData<{
+    notes: Note[];
+    activeNote: Note | null;
+    selectedId: string | null;
+  }>();
+  const actionData = useActionData<{ error?: string }>();
+  const creationFormRef = useRef<HTMLFormElement | null>(null);
+  const [isEditMode, setIsEditMode] = useState(selectedId ? true : false);
+
+  // When selected note changes, leave edit mode (unless just created)
+  useEffect(() => {
+    setIsEditMode(selectedId ? true : false);
+  }, [selectedId]);
+
+  // Auto-focus new note input
+  useEffect(() => {
+    if (!selectedId)
+      creationFormRef.current?.elements.namedItem("title")?.focus();
+  }, [selectedId]);
+
   return (
-    <div className="flex h-screen items-center justify-center">
-      <div className="flex flex-col items-center gap-16">
-        <header className="flex flex-col items-center gap-9">
-          <h1 className="leading text-2xl font-bold text-gray-800 dark:text-gray-100">
-            Welcome to <span className="sr-only">Remix</span>
-          </h1>
-          <div className="h-[144px] w-[434px]">
-            <img
-              src="/logo-light.png"
-              alt="Remix"
-              className="block w-full dark:hidden"
-            />
-            <img
-              src="/logo-dark.png"
-              alt="Remix"
-              className="hidden w-full dark:block"
-            />
+    <div className="bg-white min-h-screen h-screen flex flex-col font-sans">
+      {/* HEADER */}
+      <header
+        className="flex items-center px-8 py-5 border-b border-gray-200"
+        style={{
+          background: "#fff",
+        }}
+      >
+        <h1
+          className="text-2xl font-bold tracking-tight"
+          style={{ color: "#1976d2", letterSpacing: "-0.5px" }}
+        >
+          Personal Notes
+        </h1>
+      </header>
+      {/* MAIN */}
+      <main className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
+        {/* SIDEBAR - Note list */}
+        <aside
+          className="bg-gray-100 border-r border-gray-200 w-72 min-w-0 flex flex-col"
+          style={{ color: "#424242" }}
+        >
+          {/* New note form */}
+          <div className="p-4 border-b border-gray-200">
+            <Form
+              ref={creationFormRef}
+              method="post"
+              replace
+              onSubmit={() => {
+                setTimeout(() => {
+                  creationFormRef.current?.reset();
+                }, 200);
+              }}
+            >
+              <input type="hidden" name="_intent" value="create" />
+              <input
+                type="text"
+                name="title"
+                placeholder="New note title..."
+                className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2"
+                style={{
+                  borderColor: "#1976d2",
+                }}
+                required
+                maxLength={60}
+              />
+              <button
+                type="submit"
+                className="mt-3 w-full bg-[#fbc02d] text-[#424242] font-bold py-1 px-2 rounded hover:bg-[#ffe082] transition-all"
+              >
+                + New Note
+              </button>
+            </Form>
           </div>
-        </header>
-        <nav className="flex flex-col items-center justify-center gap-4 rounded-3xl border border-gray-200 p-6 dark:border-gray-700">
-          <p className="leading-6 text-gray-700 dark:text-gray-200">
-            What&apos;s next?
-          </p>
-          <ul>
-            {resources.map(({ href, text, icon }) => (
-              <li key={href}>
-                <a
-                  className="group flex items-center gap-3 self-stretch p-3 leading-normal text-blue-700 hover:underline dark:text-blue-500"
-                  href={href}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {icon}
-                  {text}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      </div>
+          {/* Notes List */}
+          <nav className="flex-1 overflow-y-auto">
+            <ul>
+              {notes.length === 0 && (
+                <li className="p-6 text-gray-400 italic text-center">
+                  No notes yet.
+                </li>
+              )}
+              {notes.map((note) => (
+                <li key={note.id}>
+                  <Link
+                    to={`/?noteId=${encodeURIComponent(note.id)}`}
+                    prefetch="intent"
+                    className={classNames(
+                      "block px-4 py-3 border-b border-gray-50 truncate cursor-pointer hover:bg-[#fbc02d]/10 transition",
+                      selectedId === note.id
+                        ? "bg-[#1976d2]/10 text-[#1976d2] font-semibold"
+                        : ""
+                    )}
+                    aria-current={selectedId === note.id ? "page" : undefined}
+                  >
+                    {note.title ? note.title : <span className="italic text-gray-400">Untitled</span>}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </aside>
+        {/* DETAIL/EDIT PANE */}
+        <section className="flex-1 min-w-0 flex flex-col justify-stretch">
+          <div className="flex-1 flex items-stretch min-h-0">
+            <div className="flex-1 max-w-2xl mx-auto w-full p-10 sm:p-14 flex flex-col">
+              {!selectedId ? (
+                <div className="text-center text-gray-400 mt-32">
+                  <div className="inline-block p-3 bg-gray-100 rounded-lg mb-6">
+                    <span className="text-3xl">📝</span>
+                  </div>
+                  <h2 className="text-xl font-semibold mb-3">Select or create a note to get started</h2>
+                  <p className="text-base text-gray-400">
+                    Your notes will appear here.
+                  </p>
+                </div>
+              ) : (
+                <NoteDetailPane
+                  key={activeNote?.id}
+                  note={activeNote}
+                  isEdit={isEditMode}
+                  onEdit={setIsEditMode}
+                  actionError={actionData?.error}
+                />
+              )}
+            </div>
+          </div>
+          <footer className="text-center p-4 text-xs text-gray-300 border-t border-gray-100">
+            &copy; {new Date().getFullYear()} Personal Notes App. All rights reserved.
+          </footer>
+        </section>
+      </main>
     </div>
   );
 }
 
-const resources = [
-  {
-    href: "https://remix.run/start/quickstart",
-    text: "Quick Start (5 min)",
-    icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="20"
-        viewBox="0 0 20 20"
-        fill="none"
-        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
+/**
+ * Shows and edits a note; allows toggling between edit and read mode, and deleting.
+ */
+interface Note {
+  id: string;
+  title: string;
+  body: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+function NoteDetailPane({
+  note,
+  isEdit,
+  onEdit,
+  actionError,
+}: {
+  note: Note;
+  isEdit: boolean;
+  onEdit: (mode: boolean) => void;
+  actionError?: string;
+}) {
+  const [localEdit, setLocalEdit] = useState(isEdit);
+  const [title, setTitle] = useState(note?.title || "");
+  const [body, setBody] = useState(note?.body || "");
+  const editInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    setTitle(note?.title || "");
+    setBody(note?.body || "");
+    setLocalEdit(isEdit);
+  }, [note, isEdit]);
+
+  useEffect(() => {
+    if (localEdit) editInputRef.current?.focus();
+  }, [localEdit]);
+
+  if (!note) {
+    return null;
+  }
+  return (
+    <div className="w-full relative">
+      <div className="flex items-center mb-4 gap-4">
+        {localEdit ? (
+          <span className="text-sm text-[#424242] opacity-80 font-semibold">
+            Editing Note
+          </span>
+        ) : (
+          <span className="text-sm text-[#1976d2] font-bold">Viewing Note</span>
+        )}
+        <div className="flex-1" />
+        <button
+          className={classNames(
+            "text-xs px-3 py-1 rounded font-bold",
+            "transition-all ml-2",
+            localEdit
+              ? "bg-gray-100 text-[#1976d2] border border-blue-200 hover:bg-gray-200"
+              : "bg-[#fbc02d] text-[#424242] border-none hover:bg-[#ffe082]"
+          )}
+          type="button"
+          onClick={() => onEdit(!localEdit)}
+        >
+          {localEdit ? "Cancel" : "Edit"}
+        </button>
+      </div>
+      {actionError && (
+        <div className="text-red-500 text-sm mb-2">{actionError}</div>
+      )}
+      <Form
+        method="post"
+        replace
+        onSubmit={ev => {
+          if (!window.confirm("Save changes to this note?")) {
+            ev.preventDefault();
+          }
+        }}
+        className="flex flex-col gap-6"
+        style={localEdit ? undefined : { pointerEvents: "none", opacity: 0.98 }}
       >
-        <path
-          d="M8.51851 12.0741L7.92592 18L15.6296 9.7037L11.4815 7.33333L12.0741 2L4.37036 10.2963L8.51851 12.0741Z"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+        <input type="hidden" name="id" value={note.id} />
+        <input type="hidden" name="_intent" value="update" />
+        <input
+          ref={editInputRef}
+          name="title"
+          type="text"
+          placeholder="Title"
+          className={classNames(
+            "w-full text-lg font-semibold px-2 py-1 border-b border-gray-200 bg-transparent mb-3",
+            localEdit
+              ? "focus-within:outline-none focus-within:border-[#1976d2]"
+              : ""
+          )}
+          style={localEdit ? { borderColor: "#1976d2" } : undefined}
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          readOnly={!localEdit}
+          maxLength={60}
+          required
         />
-      </svg>
-    ),
-  },
-  {
-    href: "https://remix.run/start/tutorial",
-    text: "Tutorial (30 min)",
-    icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="20"
-        viewBox="0 0 20 20"
-        fill="none"
-        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
+        <textarea
+          name="body"
+          placeholder="Write your note here..."
+          rows={12}
+          className={classNames(
+            "w-full p-2 text-base border rounded resize-vertical",
+            localEdit
+              ? "bg-white border-gray-300 focus:outline-none focus:border-[#1976d2]"
+              : "bg-gray-100 border-gray-100 text-gray-500"
+          )}
+          style={localEdit ? { borderColor: "#1976d2" } : undefined}
+          value={body}
+          onChange={e => setBody(e.target.value)}
+          readOnly={!localEdit}
+        />
+        {localEdit && (
+          <div className="flex gap-3 mt-2">
+            <button
+              className="bg-[#1976d2] text-white rounded px-6 py-2 font-bold hover:bg-[#1565c0] transition"
+              type="submit"
+            >
+              Save
+            </button>
+            <DeleteNoteButton noteId={note.id} />
+          </div>
+        )}
+      </Form>
+      {!localEdit && (
+        <div className="mt-8">
+          <div className="text-xs text-gray-400">
+            Created: {new Date(note.created_at).toLocaleString()}
+            {note.updated_at && note.updated_at !== note.created_at
+              ? ` | Updated: ${new Date(note.updated_at).toLocaleString()}`
+              : ""}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Separate form for deleting a note */
+function DeleteNoteButton({ noteId }: { noteId: string }) {
+  return (
+    <Form
+      method="post"
+      replace
+      className="inline"
+      onSubmit={ev => {
+        if (!window.confirm("Are you sure you want to delete this note?")) {
+          ev.preventDefault();
+        }
+      }}
+    >
+      <input type="hidden" name="_intent" value="delete" />
+      <input type="hidden" name="id" value={noteId} />
+      <button
+        type="submit"
+        className="inline-block px-6 py-2 ml-2 rounded font-bold bg-[#fbc02d] text-[#424242] hover:bg-[#ffd54f] border-2 border-[#fbc02d]"
+        style={{
+          boxShadow: "0 1px 5px rgba(251, 192, 45, 0.07)",
+        }}
       >
-        <path
-          d="M4.561 12.749L3.15503 14.1549M3.00811 8.99944H1.01978M3.15503 3.84489L4.561 5.2508M8.3107 1.70923L8.3107 3.69749M13.4655 3.84489L12.0595 5.2508M18.1868 17.0974L16.635 18.6491C16.4636 18.8205 16.1858 18.8205 16.0144 18.6491L13.568 16.2028C13.383 16.0178 13.0784 16.0347 12.915 16.239L11.2697 18.2956C11.047 18.5739 10.6029 18.4847 10.505 18.142L7.85215 8.85711C7.75756 8.52603 8.06365 8.21994 8.39472 8.31453L17.6796 10.9673C18.0223 11.0653 18.1115 11.5094 17.8332 11.7321L15.7766 13.3773C15.5723 13.5408 15.5554 13.8454 15.7404 14.0304L18.1868 16.4767C18.3582 16.6481 18.3582 16.926 18.1868 17.0974Z"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    href: "https://remix.run/docs",
-    text: "Remix Docs",
-    icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="20"
-        viewBox="0 0 20 20"
-        fill="none"
-        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
-      >
-        <path
-          d="M9.99981 10.0751V9.99992M17.4688 17.4688C15.889 19.0485 11.2645 16.9853 7.13958 12.8604C3.01467 8.73546 0.951405 4.11091 2.53116 2.53116C4.11091 0.951405 8.73546 3.01467 12.8604 7.13958C16.9853 11.2645 19.0485 15.889 17.4688 17.4688ZM2.53132 17.4688C0.951566 15.8891 3.01483 11.2645 7.13974 7.13963C11.2647 3.01471 15.8892 0.951453 17.469 2.53121C19.0487 4.11096 16.9854 8.73551 12.8605 12.8604C8.73562 16.9853 4.11107 19.0486 2.53132 17.4688Z"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    href: "https://rmx.as/discord",
-    text: "Join Discord",
-    icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="20"
-        viewBox="0 0 24 20"
-        fill="none"
-        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
-      >
-        <path
-          d="M15.0686 1.25995L14.5477 1.17423L14.2913 1.63578C14.1754 1.84439 14.0545 2.08275 13.9422 2.31963C12.6461 2.16488 11.3406 2.16505 10.0445 2.32014C9.92822 2.08178 9.80478 1.84975 9.67412 1.62413L9.41449 1.17584L8.90333 1.25995C7.33547 1.51794 5.80717 1.99419 4.37748 2.66939L4.19 2.75793L4.07461 2.93019C1.23864 7.16437 0.46302 11.3053 0.838165 15.3924L0.868838 15.7266L1.13844 15.9264C2.81818 17.1714 4.68053 18.1233 6.68582 18.719L7.18892 18.8684L7.50166 18.4469C7.96179 17.8268 8.36504 17.1824 8.709 16.4944L8.71099 16.4904C10.8645 17.0471 13.128 17.0485 15.2821 16.4947C15.6261 17.1826 16.0293 17.8269 16.4892 18.4469L16.805 18.8725L17.3116 18.717C19.3056 18.105 21.1876 17.1751 22.8559 15.9238L23.1224 15.724L23.1528 15.3923C23.5873 10.6524 22.3579 6.53306 19.8947 2.90714L19.7759 2.73227L19.5833 2.64518C18.1437 1.99439 16.6386 1.51826 15.0686 1.25995ZM16.6074 10.7755L16.6074 10.7756C16.5934 11.6409 16.0212 12.1444 15.4783 12.1444C14.9297 12.1444 14.3493 11.6173 14.3493 10.7877C14.3493 9.94885 14.9378 9.41192 15.4783 9.41192C16.0471 9.41192 16.6209 9.93851 16.6074 10.7755ZM8.49373 12.1444C7.94513 12.1444 7.36471 11.6173 7.36471 10.7877C7.36471 9.94885 7.95323 9.41192 8.49373 9.41192C9.06038 9.41192 9.63892 9.93712 9.6417 10.7815C9.62517 11.6239 9.05462 12.1444 8.49373 12.1444Z"
-          strokeWidth="1.5"
-        />
-      </svg>
-    ),
-  },
-];
+        Delete
+      </button>
+    </Form>
+  );
+}

@@ -1,40 +1,53 @@
-# Welcome to Remix!
+# Personal Notes App (Remix Frontend)
 
-- 📖 [Remix docs](https://remix.run/docs)
+A minimal, modern personal notes app. Features:
+
+- Create, edit, view, and delete notes
+- Minimalistic modern light theme
+- Color palette: `primary` #1976d2, `secondary` #424242, `accent` #fbc02d
+- Layout: header (app title), sidebar note list, detail/edit pane
+- Fast and accessible
+
+## Usage
+
+By default, the frontend expects to find the notes database backend at:
+
+```
+http://localhost:4000/notes
+```
+
+To point at a custom backend (e.g., in the cloud), set the environment variable `NOTES_API_BASE` before starting the app, e.g.:
+
+```
+NOTES_API_BASE=https://your-database-api.url.com npm run dev
+```
 
 ## Development
 
-Run the dev server:
+Run the dev server with:
 
 ```shellscript
 npm run dev
 ```
 
-## Deployment
+## Build & Deployment
 
-First, build your app for production:
+To build for production:
 
 ```sh
 npm run build
-```
-
-Then run the app in production mode:
-
-```sh
 npm start
 ```
 
-Now you'll need to pick a host to deploy it to.
+## Styling & Customization
 
-### DIY
+This app uses [Tailwind CSS](https://tailwindcss.com/) with the color palette:
 
-If you're familiar with deploying Node applications, the built-in Remix app server is production-ready.
+- Primary: #1976d2 (blue) – text, active nav, header
+- Secondary: #424242 (grey) – sidebar, default text
+- Accent: #fbc02d (yellow) – buttons, highlights
 
-Make sure to deploy the output of `npm run build`
+Fonts: “Inter” (Google Fonts)
 
-- `build/server`
-- `build/client`
+UI is minimal and responsive.
 
-## Styling
-
-This template comes with [Tailwind CSS](https://tailwindcss.com/) already configured for a simple default starting experience. You can use whatever css framework you prefer. See the [Vite docs on css](https://vitejs.dev/guide/features.html#css) for more information.
